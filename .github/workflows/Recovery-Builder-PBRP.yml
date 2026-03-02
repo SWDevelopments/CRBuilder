@@ -12,23 +12,23 @@ on:
         - android-12.1
         - android-11.0
       DEVICE_TREE:
-        description: 'Custom Recovery Tree' # Your already made Device Tree for TWRP
+        description: 'Custom Recovery Tree'
         required: true
-        default: 'https://github.com/SWDevelopments/android_device_motorola_manaus-TWRP.git'
+        default: 'https://github.com/SWDevelopments/android_device_motorola_manaus-TWRP'
       DEVICE_TREE_BRANCH:
-        description: 'Custom Recovery Tree Branch' # Your Device Tree Branch, make sure it's right.
+        description: 'Custom Recovery Tree Branch'
         required: true
-        default: 'PBRP'
+        default: '34-4-3'
       DEVICE_PATH:
-        description: 'Specify your Device Path' # As is, just like your DEVICE_PATH in your BoardConfig.mk
+        description: 'Specify your Device Path'
         required: true
         default: 'device/motorola/manaus'
       DEVICE_NAME:
-        description: 'Specify your Device Codename' # As is, just like your PRODUCT_DEVICE in your device tree.
+        description: 'Specify your Device Codename'
         required: true
         default: 'manaus'
       BUILD_TARGET:
-        description: 'Specify your Build Target' # Pick among boot, recovery and vendor_boot
+        description: 'Specify your Build Target'
         required: true
         default: 'vendorboot'
         type: choice
@@ -37,7 +37,7 @@ on:
         - recovery
         - vendorboot
       LDCHECK:
-        description: 'Path of blobs to check' # Use it know what kind of dependencies your missing for decryption blobs.
+        description: 'Path of blobs to check'
         required: true
         default: 'system/bin/qseecomd'
 
@@ -118,7 +118,9 @@ jobs:
     - name: Check Build Makefile
       run: |
         cd android-recovery
-        if [ -f ${{ inputs.DEVICE_PATH }}/twrp_${{ inputs.DEVICE_NAME}}.mk ]; then
+        if [ -f ${{ inputs.DEVICE_PATH }}/pb_${{ inputs.DEVICE_NAME}}.mk ]; then
+            echo "DEVICE_MAKEFILE=pb_${{ inputs.DEVICE_NAME }}" >> $GITHUB_ENV
+        elif [ -f ${{ inputs.DEVICE_PATH }}/twrp_${{ inputs.DEVICE_NAME}}.mk ]; then
             echo "DEVICE_MAKEFILE=twrp_${{ inputs.DEVICE_NAME }}" >> $GITHUB_ENV
         elif [ -f ${{ inputs.DEVICE_PATH }}/omni_${{ inputs.DEVICE_NAME}}.mk ]; then
             echo "DEVICE_MAKEFILE=omni_${{ inputs.DEVICE_NAME }}" >> $GITHUB_ENV
@@ -141,11 +143,11 @@ jobs:
         export ALLOW_MISSING_DEPENDENCIES=true
         lunch ${{ env.DEVICE_MAKEFILE }}-eng && mka pbrp
       
-    - name: Set Build Date # Output will be use in Release
+    - name: Set Build Date
       run: |
         echo "BUILD_DATE=$(date +%Y%m%d)" >> $GITHUB_ENV
       
-    - name: Upload to Release (boot and becovery)
+    - name: Upload to Release (boot and recovery)
       if: inputs.BUILD_TARGET == 'boot' || inputs.BUILD_TARGET == 'recovery'
       uses: softprops/action-gh-release@v2
       with:
@@ -159,7 +161,7 @@ jobs:
           Device: [Device Tree/Branch](${{ inputs.DEVICE_TREE }}/tree/${{ inputs.DEVICE_TREE_BRANCH }})
           Commit: Most recent [commit](${{ inputs.DEVICE_TREE }}/commit/${{ env.COMMIT_ID }}) during building.
 
-    - name: Upload to Release (if vendor_boot)
+    - name: Upload to Release (if vendorboot)
       if: inputs.BUILD_TARGET == 'vendorboot'
       uses: softprops/action-gh-release@v2
       with:
@@ -173,8 +175,8 @@ jobs:
           Device: [Device Tree/Branch](${{ inputs.DEVICE_TREE }}/tree/${{ inputs.DEVICE_TREE_BRANCH }})
           Commit: Most recent [commit](${{ inputs.DEVICE_TREE }}/commit/${{ env.COMMIT_ID }}) during building.
 
-    - name: Run LDCheck (Only if LDCHECK was set to check.)
-      if: inputs.LDCHECK == 'check'
+    - name: Run LDCheck
+      if: inputs.LDCHECK != 'check'
       run: |
         cd tools
         mv -n libneeds ${GITHUB_WORKSPACE}/android-recovery/out/target/product/${{ inputs.DEVICE_NAME }}/recovery/root/
