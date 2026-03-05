@@ -3,151 +3,563 @@ name: CRBuilder - OFRP (NEW)
 on:
   workflow_dispatch:
     inputs:
-      SYNC_URL:
-        description: 'SYNC_URL'
-        required: true
-        default: 'https://gitlab.com/OrangeFox/sync.git'
+      # ===========================================
+      # MANIFEST & BRANCH CONFIGURATION
+      # ===========================================
       MANIFEST_BRANCH:
-        description: 'MANIFEST_BRANCH'
+        description: 'OrangeFox Manifest Branch'
         required: true
         default: '12.1'
+        type: choice
+        options:
+          - '12.1'
+          - '14.1'
+      
+      # ===========================================
+      # DEVICE TREE CONFIGURATION
+      # ===========================================
       DEVICE_TREE_URL:
-        description: 'DEVICE_TREE_URL'
+        description: 'Device Tree Repository URL (HTTPS or SSH)'
         required: true
         default: 'https://github.com/SWDevelopments/android_device_motorola_manaus-TWRP'
+        type: string
+      
       DEVICE_TREE_BRANCH:
-        description: 'DEVICE_TREE_BRANCH'
+        description: 'Device Tree Branch'
         required: true
         default: '34-4-3'
+        type: string
+      
       DEVICE_PATH:
-        description: 'DEVICE_PATH'
+        description: 'Device Tree Path (e.g., device/brand/codename)'
         required: true
         default: 'device/motorola/manaus'
+        type: string
+      
+      # ===========================================
+      # COMMON TREE CONFIGURATION (OPTIONAL)
+      # ===========================================
       COMMON_TREE_URL:
-        description: 'COMMON_TREE_URL (if no common tree, leave blank)'
+        description: 'Common Tree URL (leave empty if not needed)'
         required: false
-      COMMON_PATH:
-        description: 'COMMON_PATH (if no common tree, leave blank)'
+        default: ''
+        type: string
+      
+      COMMON_TREE_PATH:
+        description: 'Common Tree Path (e.g., device/xiaomi/common)'
         required: false
+        default: ''
+        type: string
+      
+      # ===========================================
+      # DEVICE INFORMATION
+      # ===========================================
       DEVICE_NAME:
-        description: 'DEVICE_NAME'
+        description: 'Device Codename (e.g., manaus)'
         required: true
         default: 'manaus'
+        type: string
+      
       MAKEFILE_NAME:
-        description: 'MAKEFILE_NAME'
+        description: 'Makefile Name (e.g., twrp_manaus or omni_manaus)'
         required: true
         default: 'twrp_manaus'
+        type: string
+      
+      # ===========================================
+      # BUILD CONFIGURATION
+      # ===========================================
       BUILD_TARGET:
-        description: 'BUILD_TARGET'
+        description: 'Build Target'
         required: true
         default: 'vendorboot'
+        type: choice
+        options:
+          - 'recoveryimage'
+          - 'bootimage'
+          - 'vendorboot'
+          - 'dtboimage'
+      
+      USE_SSH:
+        description: 'Use SSH for Git cloning (requires SSH_PRIVATE_KEY secret)'
+        required: false
+        default: false
+        type: boolean
+      
+      # ===========================================
+      # RELEASE CONFIGURATION
+      # ===========================================
+      RELEASE_TYPE:
+        description: 'Release Type (for naming)'
+        required: true
+        default: 'Unofficial'
+        type: choice
+        options:
+          - 'Unofficial'
+          - 'Beta'
+          - 'Stable'
+          - 'Test'
+
+env:
+  # OrangeFox Sync URL (Official)
+  SYNC_URL: 'https://gitlab.com/OrangeFox/sync.git'
+  # Build workspace path
+  WORKSPACE_PATH: '/home/runner/fox_build'
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
+    
     steps:
- 
-    # You might want to Checkout your repo first, but not mandatory
-    - name: Check Out
+    # ===========================================
+    # STEP 1: CHECKOUT & CLEANUP
+    # ===========================================
+    - name: Checkout Repository
       uses: actions/checkout@v4
 
-    # Cleanup The Actions Workspace Using Custom Composite Run Actions
-    - name: Cleanup
-      uses: rokibhasansagar/slimhub_actions@main
-
-    - name: Initialize workspace
+    - name: Cleanup Workspace
       run: |
-        mkdir workspace
-        cd workspace
-        echo "workspace-folder=$(pwd)" >> $GITHUB_OUTPUT
-      id: pwd
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android/sdk
+        sudo rm -rf /opt/ghc
+        sudo apt-get clean
+        sudo apt-get autoremove -y
+        df -h
 
-    - name: Prepare the build environment
+    - name: Create Build Directories
       run: |
-        sudo apt update && sudo apt upgrade -y
-        DEBIAN_FRONTEND=noninteractive sudo apt install -yq \
-            linux-modules-extra-$(uname -r) \
-            git python3 tar aria2
-        git clone https://gitlab.com/OrangeFox/misc/scripts
-        cd scripts
-        sudo bash setup/android_build_env.sh
-        sed -i 's/cd -/cd ../g' setup/install_android_sdk.sh
-        sudo bash setup/install_android_sdk.sh
-      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+        mkdir -p ${{ env.WORKSPACE_PATH }}
+        mkdir -p ${{ env.WORKSPACE_PATH }}/sync
+        echo "Build directories created"
 
-    - name: Install OpenJDK
+    # ===========================================
+    # STEP 2: ENVIRONMENT SETUP
+    # ===========================================
+    - name: Prepare Build Environment
+      run: |
+        sudo apt-get update
+        sudo apt-get upgrade -y
+        
+        # Install essential build dependencies
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq \
+          git \
+          git-lfs \
+          python3 \
+          python3-pip \
+          python3-dev \
+          curl \
+          wget \
+          tar \
+          unzip \
+          zip \
+          jq \
+          aria2 \
+          bc \
+          bison \
+          build-essential \
+          ccache \
+          flex \
+          g++-multilib \
+          gcc-multilib \
+          gnupg \
+          gperf \
+          imagemagick \
+          lib32ncurses5-dev \
+          lib32readline-dev \
+          lib32z1-dev \
+          libelf-dev \
+          liblz4-tool \
+          libncurses5-dev \
+          libncursesw5-dev \
+          libsdl1.2-dev \
+          libssl-dev \
+          libxml2 \
+          libxml2-utils \
+          lzop \
+          pngcrush \
+          rsync \
+          schedtool \
+          squashfs-tools \
+          xsltproc \
+          zip \
+          zlib1g-dev \
+          linux-modules-extra-$(uname -r)
+        
+        # Install repo tool
+        mkdir -p ~/.bin
+        curl https://storage.googleapis.com/git-repo-downloads/repo > ~/.bin/repo
+        chmod a+rx ~/.bin/repo
+        echo "$HOME/.bin" >> $GITHUB_PATH
+        
+        # Configure git
+        git config --global user.name "OrangeFox Builder"
+        git config --global user.email "builder@orangefox.dev"
+        git config --global color.ui auto
+
+    - name: Setup OpenJDK 11
       uses: actions/setup-java@v4
       with:
         distribution: 'zulu'
         java-version: '11'
 
+    - name: Setup OpenJDK 17 (for 14.1 branch)
+      if: github.event.inputs.MANIFEST_BRANCH == '14.1'
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'zulu'
+        java-version: '17'
+
     - name: Setup SSH Keys
-      if: ${{ startsWith(github.event.inputs.MANIFEST_URL, 'git@github.com') || 
-          startsWith(github.event.inputs.DEVICE_TREE_URL, 'git@github.com') ||
-          startsWith(github.event.inputs.COMMON_TREE_URL, 'git@github.com') }}
+      if: |
+        (github.event.inputs.USE_SSH == 'true') ||
+        startsWith(github.event.inputs.DEVICE_TREE_URL, 'git@') ||
+        startsWith(github.event.inputs.COMMON_TREE_URL, 'git@')
       uses: webfactory/ssh-agent@v0.9.0
       with:
-          ssh-private-key: |
-            ${{ secrets.SSH_PRIVATE_KEY }}
+        ssh-private-key: |
+          ${{ secrets.SSH_PRIVATE_KEY }}
 
-    - name: Sync OrangeFox sources and minimal manifest
+    # ===========================================
+    # STEP 3: SYNC ORANGEFOX SOURCES
+    # ===========================================
+    - name: Clone OrangeFox Sync Tools
       run: |
-        cd ${{ steps.pwd.outputs.workspace-folder }}
-        git clone ${{ github.event.inputs.SYNC_URL }}
-        cd sync
-        ./orangefox_sync.sh --branch ${{ github.event.inputs.MANIFEST_BRANCH }} --path ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
-      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+        cd ${{ env.WORKSPACE_PATH }}
+        if [ "${{ github.event.inputs.USE_SSH }}" = "true" ]; then
+          git clone git@gitlab.com:OrangeFox/sync.git sync
+        else
+          git clone ${{ env.SYNC_URL }} sync
+        fi
+        ls -la sync/
 
-    - name: Clone device tree
+    - name: Sync OrangeFox Sources
       run: |
-        cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
-        git clone ${{ github.event.inputs.DEVICE_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.DEVICE_PATH }}
-      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+        cd ${{ env.WORKSPACE_PATH }}/sync
+        
+        # Set manifest path
+        MANIFEST_PATH="${{ env.WORKSPACE_PATH }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}"
+        
+        # Build sync command
+        SYNC_CMD="./orangefox_sync.sh --branch ${{ github.event.inputs.MANIFEST_BRANCH }} --path ${MANIFEST_PATH}"
+        
+        # Add SSH flag if needed
+        if [ "${{ github.event.inputs.USE_SSH }}" = "true" ]; then
+          SYNC_CMD="${SYNC_CMD} --ssh 1"
+        fi
+        
+        echo "Running: ${SYNC_CMD}"
+        ${SYNC_CMD}
+        
+        echo "Sync completed successfully"
+        df -h
 
-    - name: Clone common tree
+    # ===========================================
+    # STEP 4: CLONE DEVICE TREES
+    # ===========================================
+    - name: Clone Device Tree
+      run: |
+        MANIFEST_PATH="${{ env.WORKSPACE_PATH }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}"
+        DEVICE_PATH="${{ github.event.inputs.DEVICE_PATH }}"
+        
+        echo "Cloning device tree to: ${MANIFEST_PATH}/${DEVICE_PATH}"
+        
+        # Create parent directories if needed
+        mkdir -p "${MANIFEST_PATH}/$(dirname ${DEVICE_PATH})"
+        
+        # Clone the device tree
+        git clone \
+          --depth=1 \
+          -b "${{ github.event.inputs.DEVICE_TREE_BRANCH }}" \
+          "${{ github.event.inputs.DEVICE_TREE_URL }}" \
+          "${MANIFEST_PATH}/${DEVICE_PATH}"
+        
+        echo "Device tree cloned successfully"
+        ls -la "${MANIFEST_PATH}/${DEVICE_PATH}"
+
+    - name: Clone Common Tree
       if: |
-        github.event.inputs.COMMON_TREE_URL != null
-        && github.event.inputs.COMMON_PATH != null
+        github.event.inputs.COMMON_TREE_URL != '' &&
+        github.event.inputs.COMMON_TREE_PATH != ''
       run: |
-        cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
-        git clone ${{ github.event.inputs.COMMON_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.COMMON_PATH }}
-      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+        MANIFEST_PATH="${{ env.WORKSPACE_PATH }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}"
+        COMMON_PATH="${{ github.event.inputs.COMMON_TREE_PATH }}"
+        
+        echo "Cloning common tree to: ${MANIFEST_PATH}/${COMMON_PATH}"
+        
+        # Create parent directories if needed
+        mkdir -p "${MANIFEST_PATH}/$(dirname ${COMMON_PATH})"
+        
+        # Clone the common tree
+        git clone \
+          --depth=1 \
+          -b "${{ github.event.inputs.DEVICE_TREE_BRANCH }}" \
+          "${{ github.event.inputs.COMMON_TREE_URL }}" \
+          "${MANIFEST_PATH}/${COMMON_PATH}"
+        
+        echo "Common tree cloned successfully"
+        ls -la "${MANIFEST_PATH}/${COMMON_PATH}"
 
-    - name: Set Swap Space
+    # ===========================================
+    # STEP 5: CONFIGURE BUILD ENVIRONMENT
+    # ===========================================
+    - name: Setup Swap Space
       uses: pierotofy/set-swap-space@master
       with:
         swap-size-gb: 12
 
-    - name: Building recovery
+    - name: Setup Ccache
       run: |
-        cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
-        set +e
+        echo "Setting up ccache..."
+        ccache -M 10G
+        ccache -z
+        echo "USE_CCACHE=1" >> $GITHUB_ENV
+        echo "CCACHE_COMPRESS=1" >> $GITHUB_ENV
+
+    # ===========================================
+    # STEP 6: BUILD RECOVERY
+    # ===========================================
+    - name: Build OrangeFox Recovery
+      id: build
+      run: |
+        MANIFEST_PATH="${{ env.WORKSPACE_PATH }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}"
+        cd "${MANIFEST_PATH}"
+        
+        echo "=========================================="
+        echo "Starting OrangeFox Recovery Build"
+        echo "=========================================="
+        echo "Device: ${{ github.event.inputs.DEVICE_NAME }}"
+        echo "Makefile: ${{ github.event.inputs.MAKEFILE_NAME }}"
+        echo "Target: ${{ github.event.inputs.BUILD_TARGET }}"
+        echo "Branch: ${{ github.event.inputs.MANIFEST_BRANCH }}"
+        echo "=========================================="
+        
+        # Initialize build environment
         source build/envsetup.sh
+        
+        # Set build variables
         export ALLOW_MISSING_DEPENDENCIES=true
-        set -e
-        lunch ${{ github.event.inputs.MAKEFILE_NAME }}-eng && make clean && mka adbd ${{ github.event.inputs.BUILD_TARGET }}image -j$(nproc --all)
-      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
-      continue-on-error: true
+        export FOX_USE_TWRP_RECOVERY_IMAGE_BUILDER=1
+        export LC_ALL=C
+        
+        # Lunch the device
+        echo "Lunching device..."
+        lunch "${{ github.event.inputs.MAKEFILE_NAME }}-eng" || {
+          echo "ERROR: Failed to lunch device configuration"
+          exit 1
+        }
+        
+        # Clean previous build
+        make clean
+        
+        # Start the build
+        echo "Starting build process..."
+        BUILD_START=$(date +%s)
+        
+        mka ${{ github.event.inputs.BUILD_TARGET }} -j$(nproc --all) || {
+          echo "ERROR: Build failed!"
+          exit 1
+        }
+        
+        BUILD_END=$(date +%s)
+        BUILD_DURATION=$((BUILD_END - BUILD_START))
+        
+        echo "=========================================="
+        echo "Build completed in ${BUILD_DURATION} seconds"
+        echo "=========================================="
+        
+        echo "build_duration=${BUILD_DURATION}" >> $GITHUB_OUTPUT
+        echo "build_success=true" >> $GITHUB_OUTPUT
 
-    - name: Check the output directory before uploading
+    # ===========================================
+    # STEP 7: VERIFY BUILD OUTPUT
+    # ===========================================
+    - name: Verify Build Output
+      id: verify
       run: |
-        ls -al ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}/out/target/product/
-        echo
-        ls -al ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/
+        MANIFEST_PATH="${{ env.WORKSPACE_PATH }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}"
+        DEVICE="${{ github.event.inputs.DEVICE_NAME }}"
+        OUT_DIR="${MANIFEST_PATH}/out/target/product/${DEVICE}"
+        
+        echo "Checking build output in: ${OUT_DIR}"
+        ls -la "${OUT_DIR}/" || true
+        
+        # Check for recovery image
+        if [ -f "${OUT_DIR}/recovery.img" ]; then
+          echo "Found recovery.img"
+          RECOVERY_IMG="${OUT_DIR}/recovery.img"
+          echo "recovery_image=${RECOVERY_IMG}" >> $GITHUB_OUTPUT
+        fi
+        
+        # Check for boot image (some devices use boot as recovery)
+        if [ -f "${OUT_DIR}/boot.img" ]; then
+          echo "Found boot.img"
+          BOOT_IMG="${OUT_DIR}/boot.img"
+          echo "boot_image=${BOOT_IMG}" >> $GITHUB_OUTPUT
+        fi
+        
+        # Check for vendor boot image
+        if [ -f "${OUT_DIR}/vendor_boot.img" ]; then
+          echo "Found vendor_boot.img"
+          VENDOR_BOOT_IMG="${OUT_DIR}/vendor_boot.img"
+          echo "vendor_boot_image=${VENDOR_BOOT_IMG}" >> $GITHUB_OUTPUT
+        fi
+        
+        # Verify at least one image was built
+        if [ ! -f "${OUT_DIR}/recovery.img" ] && [ ! -f "${OUT_DIR}/boot.img" ] && [ ! -f "${OUT_DIR}/vendor_boot.img" ]; then
+          echo "ERROR: No recovery image found!"
+          exit 1
+        fi
+        
+        echo "Build verification successful!"
 
-    - name: Upload to Release
+    # ===========================================
+    # STEP 8: PACKAGE BUILD ARTIFACTS
+    # ===========================================
+    - name: Package Build Artifacts
+      id: package
+      run: |
+        MANIFEST_PATH="${{ env.WORKSPACE_PATH }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}"
+        DEVICE="${{ github.event.inputs.DEVICE_NAME }}"
+        OUT_DIR="${MANIFEST_PATH}/out/target/product/${DEVICE}"
+        DIST_DIR="${{ env.WORKSPACE_PATH }}/dist"
+        
+        # Create distribution directory
+        mkdir -p "${DIST_DIR}"
+        
+        # Get build date
+        BUILD_DATE=$(date +%Y%m%d)
+        VERSION="${{ github.event.inputs.MANIFEST_BRANCH }}"
+        RELEASE_TYPE="${{ github.event.inputs.RELEASE_TYPE }}"
+        
+        # Copy and rename images with proper naming convention
+        if [ -f "${OUT_DIR}/recovery.img" ]; then
+          cp "${OUT_DIR}/recovery.img" "${DIST_DIR}/OrangeFox-${RELEASE_TYPE}-${DEVICE}-${VERSION}-${BUILD_DATE}.img"
+          echo "Packaged recovery.img"
+        fi
+        
+        if [ -f "${OUT_DIR}/boot.img" ]; then
+          cp "${OUT_DIR}/boot.img" "${DIST_DIR}/OrangeFox-${RELEASE_TYPE}-${DEVICE}-${VERSION}-${BUILD_DATE}-boot.img"
+          echo "Packaged boot.img"
+        fi
+        
+        if [ -f "${OUT_DIR}/vendor_boot.img" ]; then
+          cp "${OUT_DIR}/vendor_boot.img" "${DIST_DIR}/OrangeFox-${RELEASE_TYPE}-${DEVICE}-${VERSION}-${BUILD_DATE}-vendor_boot.img"
+          echo "Packaged vendor_boot.img"
+        fi
+        
+        # Generate MD5 checksums
+        cd "${DIST_DIR}"
+        for file in *.img; do
+          if [ -f "$file" ]; then
+            md5sum "$file" > "${file}.md5"
+            sha256sum "$file" > "${file}.sha256"
+          fi
+        done
+        
+        # Create build info file
+        cat > "${DIST_DIR}/build_info.txt" << EOF
+        OrangeFox Recovery Build Information
+        =====================================
+        Device: ${DEVICE}
+        Branch: ${VERSION}
+        Build Date: ${BUILD_DATE}
+        Release Type: ${RELEASE_TYPE}
+        Build Target: ${{ github.event.inputs.BUILD_TARGET }}
+        Device Tree: ${{ github.event.inputs.DEVICE_TREE_URL }}
+        Device Tree Branch: ${{ github.event.inputs.DEVICE_TREE_BRANCH }}
+        GitHub Run ID: ${{ github.run_id }}
+        Build Duration: ${{ steps.build.outputs.build_duration }} seconds
+        
+        Build Completed: $(date)
+        EOF
+        
+        # List all artifacts
+        echo "=========================================="
+        echo "Build Artifacts:"
+        ls -la "${DIST_DIR}/"
+        echo "=========================================="
+        
+        echo "artifact_path=${DIST_DIR}" >> $GITHUB_OUTPUT
+        echo "build_date=${BUILD_DATE}" >> $GITHUB_OUTPUT
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: OrangeFox-${{ github.event.inputs.DEVICE_NAME }}-${{ github.run_id }}
+        path: ${{ env.WORKSPACE_PATH }}/dist/*
+        retention-days: 30
+
+    # ===========================================
+    # STEP 9: CREATE RELEASE
+    # ===========================================
+    - name: Create Release
+      if: success()
       uses: softprops/action-gh-release@v2
       with:
         files: |
-          ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/*.img
-          ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/*.zip
-        name: ${{ github.event.inputs.DEVICE_NAME }}-${{ github.run_id }}
-        tag_name: ${{ github.run_id }}
+          ${{ env.WORKSPACE_PATH }}/dist/*.img
+          ${{ env.WORKSPACE_PATH }}/dist/*.md5
+          ${{ env.WORKSPACE_PATH }}/dist/*.sha256
+          ${{ env.WORKSPACE_PATH }}/dist/build_info.txt
+        name: OrangeFox ${{ github.event.inputs.RELEASE_TYPE }} - ${{ github.event.inputs.DEVICE_NAME }} (${{ github.event.inputs.MANIFEST_BRANCH }})
+        tag_name: ${{ github.event.inputs.DEVICE_NAME }}-${{ github.run_id }}
         body: |
-          Manifest: ${{ github.event.inputs.MANIFEST_BRANCH }}
-          Device: ${{ github.event.inputs.DEVICE_NAME }}
-          Target: ${{ github.event.inputs.BUILD_TARGET }}
+          ## OrangeFox Recovery Build
+          
+          **Device:** ${{ github.event.inputs.DEVICE_NAME }}
+          **Branch:** ${{ github.event.inputs.MANIFEST_BRANCH }}
+          **Release Type:** ${{ github.event.inputs.RELEASE_TYPE }}
+          **Build Target:** ${{ github.event.inputs.BUILD_TARGET }}
+          **Build Date:** ${{ steps.package.outputs.build_date }}
+          
+          ### Device Tree
+          - **URL:** ${{ github.event.inputs.DEVICE_TREE_URL }}
+          - **Branch:** ${{ github.event.inputs.DEVICE_TREE_BRANCH }}
+          - **Path:** ${{ github.event.inputs.DEVICE_PATH }}
+          
+          ### Installation
+          1. Download the appropriate `.img` file for your device
+          2. Boot into fastboot mode
+          3. Flash the recovery: `fastboot flash recovery OrangeFox-*.img`
+          4. Reboot to recovery: `fastboot reboot recovery`
+          
+          ### Notes
+          - Verify checksums before flashing
+          - Always make a backup before flashing
+          
+          ---
+          *Built with GitHub Actions - Run ID: ${{ github.run_id }}*
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    # ===========================================
+    # STEP 10: CLEANUP & SUMMARY
+    # ===========================================
+    - name: Build Summary
+      if: always()
+      run: |
+        echo "=========================================="
+        echo "ORANGEFOX RECOVERY BUILD SUMMARY"
+        echo "=========================================="
+        echo "Device: ${{ github.event.inputs.DEVICE_NAME }}"
+        echo "Branch: ${{ github.event.inputs.MANIFEST_BRANCH }}"
+        echo "Build Target: ${{ github.event.inputs.BUILD_TARGET }}"
+        echo "Build Success: ${{ steps.build.outputs.build_success }}"
+        echo "Build Duration: ${{ steps.build.outputs.build_duration }} seconds"
+        echo "Artifacts: ${{ env.WORKSPACE_PATH }}/dist/"
+        echo "=========================================="
+        
+        # Show disk usage
+        df -h
+
+    - name: Cleanup Workspace
+      if: always()
+      run: |
+        # Clear ccache stats
+        ccache -s || true
+        
+        # Clean workspace to free space
+        sudo rm -rf ${{ env.WORKSPACE_PATH }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}/out || true
+        df -h
