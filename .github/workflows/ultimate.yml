@@ -1,0 +1,978 @@
+# =============================================================================
+# Android Custom Recovery Builder - GitHub Actions Workflow
+# =============================================================================
+# Supports: TWRP, OFRP (OrangeFox), PBRP (PitchBlack Recovery Project)
+# Branches: 12.1, 14.1 (where supported)
+# Recovery Output Types: recovery.img, boot.img, vendor_boot.img, dtbo.img, zip
+# =============================================================================
+#
+# Usage:
+# 1. Fork this repository
+# 2. Go to Actions tab > Recovery Builder > Run workflow
+# 3. Fill in the required parameters:
+#    - RECOVERY_TYPE: TWRP, OFRP, or PBRP
+#    - MANIFEST_BRANCH: 12.1 or 14.1
+#    - DEVICE_TREE_URL: Git URL of your device tree
+#    - DEVICE_TREE_BRANCH: Branch of device tree
+#    - DEVICE_NAME: Device codename (e.g., "surya", "mido")
+#    - DEVICE_PATH: Path where device tree will be cloned (e.g., "device/xiaomi/surya")
+#    - BUILD_TYPE: eng or userdebug
+#    - RECOVERY_OUTPUT: Type of recovery output file
+#
+# =============================================================================
+
+name: Recovery Builder (Universal)
+
+on:
+  workflow_dispatch:
+    inputs:
+      # =========================================================================
+      # Recovery Type Selection
+      # =========================================================================
+      RECOVERY_TYPE:
+        description: 'Select Recovery Type'
+        required: true
+        default: 'OFRP'
+        type: choice
+        options:
+          - TWRP
+          - OFRP
+          - PBRP
+
+      # =========================================================================
+      # Manifest Branch Selection
+      # =========================================================================
+      MANIFEST_BRANCH:
+        description: 'Select Manifest Branch'
+        required: true
+        default: '12.1'
+        type: choice
+        options:
+          - '12.1'
+          - '14.1'
+
+      # =========================================================================
+      # Device Tree Configuration
+      # =========================================================================
+      DEVICE_TREE_URL:
+        description: 'Device Tree Git URL (e.g., https://github.com/username/device_codename)'
+        required: true
+        default: 'https://github.com/SWDevelopments/android_device_motorola_manaus-TWRP'
+        type: string
+
+      DEVICE_TREE_BRANCH:
+        description: 'Device Tree Branch (e.g., main, master, twrp-12.1)'
+        required: true
+        default: '3-45-3-2-1'
+        type: string
+
+      DEVICE_NAME:
+        description: 'Device Codename (e.g., surya, mido, lavender)'
+        required: true
+        default: 'manaus'
+        type: string
+
+      DEVICE_PATH:
+        description: 'Device Tree Path (e.g., device/xiaomi/surya)'
+        default: 'device/motorola/manaus'
+        required: true
+        type: string
+
+      # =========================================================================
+      # Build Configuration
+      # =========================================================================
+      BUILD_TYPE:
+        description: 'Build Type'
+        required: true
+        default: 'eng'
+        type: choice
+        options:
+          - userdebug
+          - eng
+
+      # =========================================================================
+      # Recovery Output Type Selection
+      # =========================================================================
+      RECOVERY_OUTPUT:
+        description: 'Recovery Output Type (what file to build)'
+        required: true
+        default: 'vendor_boot'
+        type: choice
+        options:
+          - recovery          # recovery.img - Standard recovery partition
+          - boot              # boot.img - For A/B devices or recovery-in-boot
+          - vendor_boot       # vendor_boot.img - For devices with vendor_boot partition
+          - dtbo              # dtbo.img - For devices requiring dtbo
+          - zip               # Flashable zip package
+          - all               # Build all available outputs
+
+      # =========================================================================
+      # Additional Options
+      # =========================================================================
+      MAKE_JOBS:
+        description: 'Number of Make Jobs (default: auto)'
+        required: false
+        default: 'auto'
+        type: string
+
+      EXTRA_CMD:
+        description: 'Extra Commands (optional, for advanced users)'
+        required: false
+        default: ''
+        type: string
+
+env:
+  # Environment variables for the build
+  WORKSPACE: ${{ github.workspace }}
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  CCACHE_COMPRESS: 1
+  CCACHE_COMPRESSLEVEL: 9
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:22.04
+      options: --privileged
+
+    steps:
+      # =========================================================================
+      # Step 1: Environment Setup
+      # =========================================================================
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Initialize Environment
+        run: |
+          echo "============================================================"
+          echo "Setting up build environment..."
+          echo "============================================================"
+
+          # Export inputs as environment variables
+          export RECOVERY_TYPE="${{ inputs.RECOVERY_TYPE }}"
+          export MANIFEST_BRANCH="${{ inputs.MANIFEST_BRANCH }}"
+          export DEVICE_TREE_URL="${{ inputs.DEVICE_TREE_URL }}"
+          export DEVICE_TREE_BRANCH="${{ inputs.DEVICE_TREE_BRANCH }}"
+          export DEVICE_NAME="${{ inputs.DEVICE_NAME }}"
+          export DEVICE_PATH="${{ inputs.DEVICE_PATH }}"
+          export BUILD_TYPE="${{ inputs.BUILD_TYPE }}"
+          export RECOVERY_OUTPUT="${{ inputs.RECOVERY_OUTPUT }}"
+          export MAKE_JOBS="${{ inputs.MAKE_JOBS }}"
+          export EXTRA_CMD="${{ inputs.EXTRA_CMD }}"
+
+          # Store for later steps
+          echo "RECOVERY_TYPE=$RECOVERY_TYPE" >> $GITHUB_ENV
+          echo "MANIFEST_BRANCH=$MANIFEST_BRANCH" >> $GITHUB_ENV
+          echo "DEVICE_TREE_URL=$DEVICE_TREE_URL" >> $GITHUB_ENV
+          echo "DEVICE_TREE_BRANCH=$DEVICE_TREE_BRANCH" >> $GITHUB_ENV
+          echo "DEVICE_NAME=$DEVICE_NAME" >> $GITHUB_ENV
+          echo "DEVICE_PATH=$DEVICE_PATH" >> $GITHUB_ENV
+          echo "BUILD_TYPE=$BUILD_TYPE" >> $GITHUB_ENV
+          echo "RECOVERY_OUTPUT=$RECOVERY_OUTPUT" >> $GITHUB_ENV
+
+          # Determine make jobs
+          if [ "$MAKE_JOBS" = "auto" ] || [ -z "$MAKE_JOBS" ]; then
+            MAKE_JOBS=$(nproc --all)
+          fi
+          echo "MAKE_JOBS=$MAKE_JOBS" >> $GITHUB_ENV
+
+          echo "============================================================"
+          echo "Configuration Summary:"
+          echo "============================================================"
+          echo "Recovery Type: $RECOVERY_TYPE"
+          echo "Manifest Branch: $MANIFEST_BRANCH"
+          echo "Device Name: $DEVICE_NAME"
+          echo "Device Path: $DEVICE_PATH"
+          echo "Device Tree URL: $DEVICE_TREE_URL"
+          echo "Device Tree Branch: $DEVICE_TREE_BRANCH"
+          echo "Build Type: $BUILD_TYPE"
+          echo "Recovery Output: $RECOVERY_OUTPUT"
+          echo "Make Jobs: $MAKE_JOBS"
+          echo "============================================================"
+
+      - name: Install Build Dependencies
+        run: |
+          echo "Installing required packages..."
+
+          # Prevent interactive prompts during package installation
+          export DEBIAN_FRONTEND=noninteractive
+
+          # Update package lists
+          apt-get update -y
+
+          # Install essential build tools
+          apt-get install -y \
+            git \
+            git-lfs \
+            gnupg \
+            flex \
+            bison \
+            gperf \
+            build-essential \
+            zip \
+            curl \
+            wget \
+            zlib1g-dev \
+            gcc-multilib \
+            g++-multilib \
+            libc6-dev \
+            lib32ncurses5-dev \
+            libncurses5-dev \
+            x11proto-core-dev \
+            libx11-dev \
+            lib32z-dev \
+            ccache \
+            libgl1-mesa-dev \
+            libxml2-utils \
+            xsltproc \
+            unzip \
+            bc \
+            jq \
+            python3 \
+            python3-pip \
+            rsync \
+            schedtool \
+            libssl-dev \
+            libncurses5 \
+            lzop \
+            liblz4-tool \
+            zstd \
+            libstdc++6 \
+            libgcc1
+
+          # Install repo tool
+          curl https://storage.googleapis.com/git-repo-downloads/repo > /usr/local/bin/repo
+          chmod a+x /usr/local/bin/repo
+
+          # Configure git
+          git config --global user.name "Recovery Builder"
+          git config --global user.email "builder@github.com"
+          git config --global color.ui auto
+
+          echo "Dependencies installed successfully!"
+
+      # =========================================================================
+      # Step 2: Set Recovery-Specific Variables
+      # =========================================================================
+      - name: Set Manifest Variables
+        id: set_vars
+        run: |
+          RECOVERY_TYPE="${{ env.RECOVERY_TYPE }}"
+          MANIFEST_BRANCH="${{ env.MANIFEST_BRANCH }}"
+          RECOVERY_OUTPUT="${{ env.RECOVERY_OUTPUT }}"
+
+          echo "============================================================"
+          echo "Setting up manifest for $RECOVERY_TYPE on branch $MANIFEST_BRANCH"
+          echo "============================================================"
+
+          # Define manifest URLs and branches for each recovery type
+          case "$RECOVERY_TYPE" in
+            TWRP)
+              case "$MANIFEST_BRANCH" in
+                "12.1")
+                  MANIFEST_URL="https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp"
+                  MANIFEST_BRANCH_NAME="twrp-12.1"
+                  ;;
+                "14.1")
+                  # For LineageOS 14.1 based TWRP
+                  MANIFEST_URL="https://github.com/minimal-manifest-twrp/platform_manifest_twrp_lineageos"
+                  MANIFEST_BRANCH_NAME="twrp-14.1"
+                  ;;
+                *)
+                  echo "ERROR: Unsupported branch $MANIFEST_BRANCH for TWRP"
+                  exit 1
+                  ;;
+              esac
+              ;;
+
+            OFRP)
+              case "$MANIFEST_BRANCH" in
+                "12.1")
+                  MANIFEST_URL="https://gitlab.com/OrangeFox/sync"
+                  MANIFEST_BRANCH_NAME="fox_12.1"
+                  ;;
+                "14.1")
+                  # OFRP doesn't officially support 14.1, fallback to 12.1
+                  echo "NOTE: OFRP does not officially support branch 14.1. Using 12.1 instead."
+                  MANIFEST_URL="https://gitlab.com/OrangeFox/sync"
+                  MANIFEST_BRANCH_NAME="fox_12.1"
+                  ;;
+                *)
+                  echo "ERROR: Unsupported branch $MANIFEST_BRANCH for OFRP"
+                  exit 1
+                  ;;
+              esac
+              ;;
+
+            PBRP)
+              case "$MANIFEST_BRANCH" in
+                "12.1")
+                  MANIFEST_URL="https://github.com/PitchBlackRecoveryProject/manifest_pb"
+                  MANIFEST_BRANCH_NAME="android-12.1"
+                  ;;
+                "14.1")
+                  # PBRP doesn't officially support 14.1, fallback to 12.1
+                  echo "NOTE: PBRP does not officially support branch 14.1. Using 12.1 instead."
+                  MANIFEST_URL="https://github.com/PitchBlackRecoveryProject/manifest_pb"
+                  MANIFEST_BRANCH_NAME="android-12.1"
+                  ;;
+                *)
+                  echo "ERROR: Unsupported branch $MANIFEST_BRANCH for PBRP"
+                  exit 1
+                  ;;
+              esac
+              ;;
+
+            *)
+              echo "ERROR: Unknown recovery type: $RECOVERY_TYPE"
+              exit 1
+              ;;
+          esac
+
+          # Set build targets based on recovery output type
+          case "$RECOVERY_OUTPUT" in
+            recovery)
+              BUILD_TARGETS="recoveryimage"
+              ;;
+            boot)
+              BUILD_TARGETS="bootimage"
+              ;;
+            vendor_boot)
+              BUILD_TARGETS="vendorbootimage"
+              ;;
+            dtbo)
+              BUILD_TARGETS="dtboimage"
+              ;;
+            zip)
+              BUILD_TARGETS="recoveryimage"
+              MAKE_ZIP="true"
+              ;;
+            all)
+              BUILD_TARGETS="recoveryimage bootimage vendorbootimage dtboimage"
+              MAKE_ZIP="true"
+              ;;
+            *)
+              echo "WARNING: Unknown recovery output type '$RECOVERY_OUTPUT', defaulting to recoveryimage"
+              BUILD_TARGETS="recoveryimage"
+              ;;
+          esac
+
+          # Export variables
+          echo "MANIFEST_URL=$MANIFEST_URL" >> $GITHUB_ENV
+          echo "MANIFEST_BRANCH_NAME=$MANIFEST_BRANCH_NAME" >> $GITHUB_ENV
+          echo "BUILD_TARGETS=$BUILD_TARGETS" >> $GITHUB_ENV
+
+          if [ -n "$MAKE_ZIP" ]; then
+            echo "MAKE_ZIP=$MAKE_ZIP" >> $GITHUB_ENV
+          fi
+
+          echo "Manifest URL: $MANIFEST_URL"
+          echo "Manifest Branch: $MANIFEST_BRANCH_NAME"
+          echo "Build Targets: $BUILD_TARGETS"
+
+      # =========================================================================
+      # Step 3: Sync Source Code
+      # =========================================================================
+      - name: Sync Recovery Source
+        run: |
+          echo "============================================================"
+          echo "Syncing ${{ env.RECOVERY_TYPE }} source code..."
+          echo "============================================================"
+
+          # Create workspace directory
+          mkdir -p "${{ env.WORKSPACE }}/fox"
+          cd "${{ env.WORKSPACE }}/fox"
+
+          RECOVERY_TYPE="${{ env.RECOVERY_TYPE }}"
+          MANIFEST_URL="${{ env.MANIFEST_URL }}"
+          MANIFEST_BRANCH_NAME="${{ env.MANIFEST_BRANCH_NAME }}"
+
+          if [ "$RECOVERY_TYPE" = "OFRP" ]; then
+            # OrangeFox uses a sync script from GitLab
+            echo "Cloning OrangeFox sync repository..."
+            git clone --depth=1 --branch "$MANIFEST_BRANCH_NAME" "$MANIFEST_URL" sync || {
+              echo "WARNING: Failed to clone branch $MANIFEST_BRANCH_NAME, trying master..."
+              git clone --depth=1 "$MANIFEST_URL" sync
+            }
+
+            cd sync
+            echo "Running OrangeFox sync script..."
+
+            # The sync script might require specific parameters
+            # Using the standard sync approach for OrangeFox
+            if [ -f "sync.sh" ]; then
+              chmod +x sync.sh
+              ./sync.sh --branch="$MANIFEST_BRANCH_NAME" || {
+                echo "Sync script failed, trying manual sync..."
+                # Manual fallback for OrangeFox
+                cd ..
+                rm -rf sync
+                mkdir -p .repo
+                repo init -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp -b twrp-12.1 --depth=1
+                repo sync -c -j$(nproc --all) --force-sync --no-tags --no-clone-bundle
+              }
+            else
+              echo "No sync.sh found, using manual sync..."
+              cd ..
+              rm -rf sync
+              repo init -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp -b twrp-12.1 --depth=1
+              repo sync -c -j$(nproc --all) --force-sync --no-tags --no-clone-bundle
+            fi
+          else
+            # TWRP and PBRP use standard repo sync
+            echo "Initializing repository..."
+            repo init -u "$MANIFEST_URL" -b "$MANIFEST_BRANCH_NAME" --depth=1
+
+            echo "Syncing repository (this may take a while)..."
+            repo sync -c -j${{ env.MAKE_JOBS }} --force-sync --no-tags --no-clone-bundle
+          fi
+
+          echo "Source sync completed!"
+
+      # =========================================================================
+      # Step 4: Clone Device Tree
+      # =========================================================================
+      - name: Clone Device Tree
+        run: |
+          echo "============================================================"
+          echo "Cloning device tree..."
+          echo "============================================================"
+
+          cd "${{ env.WORKSPACE }}/fox"
+
+          DEVICE_TREE_URL="${{ env.DEVICE_TREE_URL }}"
+          DEVICE_TREE_BRANCH="${{ env.DEVICE_TREE_BRANCH }}"
+          DEVICE_PATH="${{ env.DEVICE_PATH }}"
+          DEVICE_NAME="${{ env.DEVICE_NAME }}"
+
+          # Create device directory
+          mkdir -p "$(dirname "$DEVICE_PATH")"
+
+          echo "Cloning $DEVICE_TREE_URL (branch: $DEVICE_TREE_BRANCH) to $DEVICE_PATH..."
+          git clone --depth=1 --branch="$DEVICE_TREE_BRANCH" "$DEVICE_TREE_URL" "$DEVICE_PATH" || {
+            echo "WARNING: Failed to clone with branch $DEVICE_TREE_BRANCH, trying default branch..."
+            git clone --depth=1 "$DEVICE_TREE_URL" "$DEVICE_PATH"
+          }
+
+          echo "Device tree cloned successfully!"
+
+          # Check for dependencies file
+          if [ -f "$DEVICE_PATH/dependencies.json" ]; then
+            echo "Found dependencies.json, processing dependencies..."
+            cat "$DEVICE_PATH/dependencies.json"
+
+            # Parse and clone dependencies
+            DEPENDENCIES=$(cat "$DEVICE_PATH/dependencies.json")
+            echo "$DEPENDENCIES" | jq -c '.[]' 2>/dev/null | while read -r dep; do
+              DEP_PATH=$(echo "$dep" | jq -r '.path')
+              DEP_URL=$(echo "$dep" | jq -r '.url')
+              DEP_BRANCH=$(echo "$dep" | jq -r '.branch // "main"')
+
+              echo "Cloning dependency: $DEP_URL to $DEP_PATH"
+              mkdir -p "$(dirname "$DEP_PATH")"
+              git clone --depth=1 --branch="$DEP_BRANCH" "$DEP_URL" "$DEP_PATH" || {
+                echo "WARNING: Failed to clone dependency $DEP_URL"
+              }
+            done
+          fi
+
+          # Check for common tree dependencies
+          if [ -f "$DEVICE_PATH/custom_dependencies" ]; then
+            echo "Found custom_dependencies file, processing..."
+            while IFS='|' read -r dep_url dep_branch dep_path; do
+              if [ -n "$dep_url" ] && [ -n "$dep_path" ]; then
+                dep_branch=${dep_branch:-main}
+                echo "Cloning: $dep_url ($dep_branch) -> $dep_path"
+                mkdir -p "$(dirname "$dep_path")"
+                git clone --depth=1 --branch="$dep_branch" "$dep_url" "$dep_path" || true
+              fi
+            done < "$DEVICE_PATH/custom_dependencies"
+          fi
+
+          echo "All dependencies processed!"
+
+      # =========================================================================
+      # Step 5: Build Recovery
+      # =========================================================================
+      - name: Build Recovery
+        id: build
+        run: |
+          echo "============================================================"
+          echo "Building ${{ env.RECOVERY_TYPE }} for ${{ env.DEVICE_NAME }}"
+          echo "============================================================"
+
+          cd "${{ env.WORKSPACE }}/fox"
+
+          RECOVERY_TYPE="${{ env.RECOVERY_TYPE }}"
+          DEVICE_NAME="${{ env.DEVICE_NAME }}"
+          BUILD_TYPE="${{ env.BUILD_TYPE }}"
+          MAKE_JOBS="${{ env.MAKE_JOBS }}"
+          BUILD_TARGETS="${{ env.BUILD_TARGETS }}"
+          EXTRA_CMD="${{ inputs.EXTRA_CMD }}"
+
+          # Setup build environment
+          echo "Setting up build environment..."
+
+          # Source build environment
+          if [ -f "build/envsetup.sh" ]; then
+            source build/envsetup.sh
+          else
+            echo "ERROR: build/envsetup.sh not found!"
+            exit 1
+          fi
+
+          # Lunch the device
+          echo "Lunching device: $DEVICE_NAME"
+
+          case "$RECOVERY_TYPE" in
+            TWRP)
+              lunch "twrp_$DEVICE_NAME-$BUILD_TYPE" || {
+                echo "Trying alternative lunch command..."
+                lunch "omni_$DEVICE_NAME-$BUILD_TYPE" || {
+                  echo "ERROR: Failed to lunch device $DEVICE_NAME"
+                  exit 1
+                }
+              }
+              ;;
+
+            OFRP)
+              lunch "twrp_$DEVICE_NAME-$BUILD_TYPE" || {
+                echo "Trying OrangeFox lunch variants..."
+                lunch "omni_$DEVICE_NAME-$BUILD_TYPE" || {
+                  lunch "fox_$DEVICE_NAME-$BUILD_TYPE" || {
+                    echo "ERROR: Failed to lunch device $DEVICE_NAME for OFRP"
+                    exit 1
+                  }
+                }
+              }
+              ;;
+
+            PBRP)
+              lunch "twrp_$DEVICE_NAME-$BUILD_TYPE" || {
+                echo "Trying PBRP lunch variants..."
+                lunch "omni_$DEVICE_NAME-$BUILD_TYPE" || {
+                  lunch "pb_$DEVICE_NAME-$BUILD_TYPE" || {
+                    echo "ERROR: Failed to lunch device $DEVICE_NAME for PBRP"
+                    exit 1
+                  }
+                }
+              }
+              ;;
+
+            *)
+              echo "ERROR: Unknown recovery type: $RECOVERY_TYPE"
+              exit 1
+              ;;
+          esac
+
+          # Run extra commands if provided
+          if [ -n "$EXTRA_CMD" ]; then
+            echo "Running extra commands: $EXTRA_CMD"
+            eval "$EXTRA_CMD"
+          fi
+
+          # Start the build
+          echo "============================================================"
+          echo "Starting build with $MAKE_JOBS parallel jobs..."
+          echo "Build targets: $BUILD_TARGETS"
+          echo "============================================================"
+
+          START_TIME=$(date +%s)
+          BUILD_SUCCESS="true"
+
+          # Build each target
+          for target in $BUILD_TARGETS; do
+            echo ""
+            echo "------------------------------------------------------------"
+            echo "Building target: $target"
+            echo "------------------------------------------------------------"
+
+            if mka $target -j$MAKE_JOBS; then
+              echo "✓ Successfully built: $target"
+            else
+              # Retry with make if mka fails
+              echo "mka failed for $target, trying with make..."
+              if make $target -j$MAKE_JOBS; then
+                echo "✓ Successfully built: $target (using make)"
+              else
+                echo "✗ Failed to build: $target"
+                # Continue with other targets even if one fails
+                BUILD_SUCCESS="false"
+              fi
+            fi
+          done
+
+          END_TIME=$(date +%s)
+          BUILD_DURATION=$((END_TIME - START_TIME))
+
+          echo "============================================================"
+          echo "Build completed in $BUILD_DURATION seconds!"
+          echo "============================================================"
+
+          if [ "$BUILD_SUCCESS" = "true" ]; then
+            echo "BUILD_STATUS=success" >> $GITHUB_OUTPUT
+          else
+            echo "BUILD_STATUS=partial" >> $GITHUB_OUTPUT
+          fi
+
+      # =========================================================================
+      # Step 6: Prepare Artifacts
+      # =========================================================================
+      - name: Prepare Artifacts
+        id: artifacts
+        if: success() || steps.build.outputs.BUILD_STATUS == 'partial'
+        run: |
+          echo "============================================================"
+          echo "Preparing build artifacts..."
+          echo "============================================================"
+
+          cd "${{ env.WORKSPACE }}/fox"
+
+          DEVICE_NAME="${{ env.DEVICE_NAME }}"
+          RECOVERY_TYPE="${{ env.RECOVERY_TYPE }}"
+          MANIFEST_BRANCH="${{ env.MANIFEST_BRANCH }}"
+          RECOVERY_OUTPUT="${{ env.RECOVERY_OUTPUT }}"
+          BUILD_DATE=$(date +%Y%m%d)
+
+          # Create output directory
+          OUTPUT_DIR="${{ env.WORKSPACE }}/output"
+          mkdir -p "$OUTPUT_DIR"
+
+          # Output product directory
+          PRODUCT_DIR="out/target/product/$DEVICE_NAME"
+
+          if [ ! -d "$PRODUCT_DIR" ]; then
+            echo "ERROR: Product directory not found: $PRODUCT_DIR"
+            echo "Searching for output directory..."
+            PRODUCT_DIR=$(find out/target/product -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -n 1)
+            echo "Found: $PRODUCT_DIR"
+          fi
+
+          # Array to store found artifacts
+          FOUND_ARTIFACTS=()
+          ARTIFACT_NAMES=""
+
+          echo "============================================================"
+          echo "Searching for recovery files..."
+          echo "============================================================"
+
+          # Function to process and copy artifact
+          process_artifact() {
+            local src_file="$1"
+            local artifact_type="$2"
+            local output_name="${RECOVERY_TYPE}-${DEVICE_NAME}-${artifact_type}-${MANIFEST_BRANCH}-${BUILD_DATE}.img"
+
+            if [ -f "$src_file" ]; then
+              cp "$src_file" "$OUTPUT_DIR/$output_name"
+              FOUND_ARTIFACTS+=("$output_name")
+              echo "✓ Found and copied: $artifact_type -> $output_name"
+              echo "File size: $(ls -lh "$OUTPUT_DIR/$output_name" | awk '{print $5}')"
+              return 0
+            fi
+            return 1
+          }
+
+          # Search for all possible recovery outputs based on type
+          case "$RECOVERY_OUTPUT" in
+            recovery)
+              # Standard recovery.img paths
+              RECOVERY_PATHS=(
+                "$PRODUCT_DIR/recovery.img"
+                "$PRODUCT_DIR/obj/PACKAGING/recovery_intermediates/recovery.img"
+              )
+              for path in "${RECOVERY_PATHS[@]}"; do
+                if process_artifact "$path" "recovery"; then
+                  break
+                fi
+              done
+              ;;
+
+            boot)
+              # boot.img paths (for A/B devices or recovery-in-boot)
+              BOOT_PATHS=(
+                "$PRODUCT_DIR/boot.img"
+                "$PRODUCT_DIR/obj/PACKAGING/boot_intermediates/boot.img"
+              )
+              for path in "${BOOT_PATHS[@]}"; do
+                if process_artifact "$path" "boot"; then
+                  break
+                fi
+              done
+              ;;
+
+            vendor_boot)
+              # vendor_boot.img paths
+              VENDOR_BOOT_PATHS=(
+                "$PRODUCT_DIR/vendor_boot.img"
+                "$PRODUCT_DIR/obj/PACKAGING/vendor_boot_intermediates/vendor_boot.img"
+              )
+              for path in "${VENDOR_BOOT_PATHS[@]}"; do
+                if process_artifact "$path" "vendor_boot"; then
+                  break
+                fi
+              done
+              ;;
+
+            dtbo)
+              # dtbo.img paths
+              DTBO_PATHS=(
+                "$PRODUCT_DIR/dtbo.img"
+                "$PRODUCT_DIR/obj/PACKAGING/dtbo_intermediates/dtbo.img"
+              )
+              for path in "${DTBO_PATHS[@]}"; do
+                if process_artifact "$path" "dtbo"; then
+                  break
+                fi
+              done
+              ;;
+
+            zip)
+              # For zip output, first build recovery, then create zip
+              RECOVERY_PATHS=(
+                "$PRODUCT_DIR/recovery.img"
+                "$PRODUCT_DIR/obj/PACKAGING/recovery_intermediates/recovery.img"
+              )
+              for path in "${RECOVERY_PATHS[@]}"; do
+                if [ -f "$path" ]; then
+                  RECOVERY_IMG="$path"
+                  break
+                fi
+              done
+
+              if [ -n "$RECOVERY_IMG" ] && [ -f "$RECOVERY_IMG" ]; then
+                # Create flashable zip
+                ZIP_NAME="${RECOVERY_TYPE}-${DEVICE_NAME}-${MANIFEST_BRANCH}-${BUILD_DATE}.zip"
+                echo "Creating flashable zip: $ZIP_NAME"
+
+                # Create zip structure
+                ZIP_TEMP="${{ env.WORKSPACE }}/zip_temp"
+                mkdir -p "$ZIP_TEMP/META-INF/com/google/android"
+
+                # Copy recovery.img
+                cp "$RECOVERY_IMG" "$ZIP_TEMP/recovery.img"
+
+                # Create update-binary (simple flash script)
+                cat > "$ZIP_TEMP/META-INF/com/google/android/update-binary" << 'UPDATEBINARY'
+#!/sbin/sh
+# Simple recovery flash script
+echo "Flashing recovery..."
+
+if [ -e "/dev/block/by-name/recovery" ]; then
+    echo "Found recovery partition..."
+    dd if=/tmp/recovery.img of=/dev/block/by-name/recovery
+elif [ -e "/dev/block/bootdevice/by-name/recovery" ]; then
+    echo "Found recovery partition (bootdevice)..."
+    dd if=/tmp/recovery.img of=/dev/block/bootdevice/by-name/recovery
+else
+    echo "ERROR: Could not find recovery partition!"
+    exit 1
+fi
+
+echo "Recovery flashed successfully!"
+UPDATEBINARY
+                chmod +x "$ZIP_TEMP/META-INF/com/google/android/update-binary"
+
+                # Create updater-script
+                cat > "$ZIP_TEMP/META-INF/com/google/android/updater-script" << 'UPDATERSCRIPT'
+# Flash recovery
+package_extract_file("recovery.img", "/tmp/recovery.img");
+run_program("/sbin/sh", "/tmp/update-binary");
+UPDATERSCRIPT
+
+                # Create the zip
+                cd "$ZIP_TEMP"
+                zip -r "$OUTPUT_DIR/$ZIP_NAME" .
+                cd "$OUTPUT_DIR"
+
+                FOUND_ARTIFACTS+=("$ZIP_NAME")
+                echo "✓ Created flashable zip: $ZIP_NAME"
+              fi
+              ;;
+
+            all)
+              # Build all available outputs
+              echo "Searching for all possible recovery outputs..."
+
+              # Recovery.img
+              for path in "$PRODUCT_DIR/recovery.img" "$PRODUCT_DIR/obj/PACKAGING/recovery_intermediates/recovery.img"; do
+                process_artifact "$path" "recovery" && break
+              done
+
+              # boot.img
+              for path in "$PRODUCT_DIR/boot.img" "$PRODUCT_DIR/obj/PACKAGING/boot_intermediates/boot.img"; do
+                process_artifact "$path" "boot" && break
+              done
+
+              # vendor_boot.img
+              for path in "$PRODUCT_DIR/vendor_boot.img" "$PRODUCT_DIR/obj/PACKAGING/vendor_boot_intermediates/vendor_boot.img"; do
+                process_artifact "$path" "vendor_boot" && break
+              done
+
+              # dtbo.img
+              for path in "$PRODUCT_DIR/dtbo.img" "$PRODUCT_DIR/obj/PACKAGING/dtbo_intermediates/dtbo.img"; do
+                process_artifact "$path" "dtbo" && break
+              done
+
+              # Also search for any other .img files
+              echo ""
+              echo "Searching for additional .img files..."
+              find "$PRODUCT_DIR" -maxdepth 1 -name "*.img" -type f 2>/dev/null | while read -r img_file; do
+                filename=$(basename "$img_file")
+                # Skip if we already processed this
+                if [[ ! " ${FOUND_ARTIFACTS[@]} " =~ " ${filename} " ]]; then
+                  img_type="${filename%.img}"
+                  output_name="${RECOVERY_TYPE}-${DEVICE_NAME}-${img_type}-${MANIFEST_BRANCH}-${BUILD_DATE}.img"
+                  cp "$img_file" "$OUTPUT_DIR/$output_name"
+                  echo "✓ Found additional: $filename -> $output_name"
+                fi
+              done
+              ;;
+          esac
+
+          echo ""
+          echo "============================================================"
+          echo "Artifact Summary:"
+          echo "============================================================"
+
+          if [ ${#FOUND_ARTIFACTS[@]} -eq 0 ]; then
+            echo "ERROR: No recovery files found!"
+            echo ""
+            echo "Searching for any .img files in output directory..."
+            find "$PRODUCT_DIR" -name "*.img" -type f 2>/dev/null || true
+            echo ""
+            echo "Listing product directory contents:"
+            ls -la "$PRODUCT_DIR" 2>/dev/null || true
+            exit 1
+          fi
+
+          # Generate checksums for all artifacts
+          cd "$OUTPUT_DIR"
+          for artifact in "${FOUND_ARTIFACTS[@]}"; do
+            echo "Generating checksums for: $artifact"
+            md5sum "$artifact" > "${artifact}.md5sum"
+            sha256sum "$artifact" > "${artifact}.sha256sum"
+          done
+
+          echo ""
+          echo "Final artifacts:"
+          ls -lh "$OUTPUT_DIR/"
+
+          # Store artifact list for summary
+          ARTIFACT_LIST=$(IFS=,; echo "${FOUND_ARTIFACTS[*]}")
+          echo "ARTIFACT_LIST=$ARTIFACT_LIST" >> $GITHUB_ENV
+          echo "ARTIFACT_COUNT=${#FOUND_ARTIFACTS[@]}" >> $GITHUB_ENV
+
+      - name: Upload Recovery Artifacts
+        if: success() || steps.build.outputs.BUILD_STATUS == 'partial'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RECOVERY_TYPE }}-${{ env.DEVICE_NAME }}-${{ env.MANIFEST_BRANCH }}
+          path: |
+            ${{ env.WORKSPACE }}/output/*.img
+            ${{ env.WORKSPACE }}/output/*.zip
+            ${{ env.WORKSPACE }}/output/*.md5sum
+            ${{ env.WORKSPACE }}/output/*.sha256sum
+          retention-days: 30
+          if-no-files-found: warn
+
+      # =========================================================================
+      # Step 7: Build Summary
+      # =========================================================================
+      - name: Build Summary
+        if: always()
+        run: |
+          echo "============================================================"
+          echo "Build Summary"
+          echo "============================================================"
+
+          echo "Recovery Type: ${{ env.RECOVERY_TYPE }}"
+          echo "Manifest Branch: ${{ env.MANIFEST_BRANCH }}"
+          echo "Device: ${{ env.DEVICE_NAME }}"
+          echo "Device Path: ${{ env.DEVICE_PATH }}"
+          echo "Build Type: ${{ env.BUILD_TYPE }}"
+          echo "Recovery Output: ${{ env.RECOVERY_OUTPUT }}"
+          echo "Build Status: ${{ steps.build.outputs.BUILD_STATUS }}"
+          echo "Artifacts Found: ${{ env.ARTIFACT_COUNT }}"
+
+          if [ -n "${{ env.ARTIFACT_LIST }}" ]; then
+            echo ""
+            echo "Generated Artifacts:"
+            IFS=',' read -ra ARTIFACTS <<< "${{ env.ARTIFACT_LIST }}"
+            for artifact in "${ARTIFACTS[@]}"; do
+              echo "  - $artifact"
+            done
+            echo ""
+            echo "Download your recovery files from the Artifacts section above."
+          else
+            echo ""
+            echo "Build completed but no artifacts were found."
+            echo "Please check the build logs for errors."
+          fi
+
+          echo "============================================================"
+          echo ""
+          echo "Device Type Information:"
+          echo "  - recovery.img: Standard recovery partition (most devices)"
+          echo "  - boot.img: A/B devices or recovery built into boot"
+          echo "  - vendor_boot.img: Newer devices with vendor_boot partition"
+          echo "  - dtbo.img: Devices requiring device tree overlay"
+          echo "  - zip: Flashable zip for easy installation"
+          echo "============================================================"
+
+      # =========================================================================
+      # Step 8: Cleanup (Optional)
+      # =========================================================================
+      - name: Cleanup Workspace
+        if: always()
+        run: |
+          echo "Cleaning up workspace..."
+          cd "${{ env.WORKSPACE }}"
+          rm -rf fox || true
+          rm -rf zip_temp || true
+          rm -rf .ccache || true
+          echo "Cleanup completed!"
+
+# =============================================================================
+# Notes for Users:
+# =============================================================================
+#
+# 1. Recovery Output Types:
+#    - recovery: Standard recovery.img for devices with dedicated recovery partition
+#    - boot: boot.img for A/B devices or devices with recovery in boot partition
+#    - vendor_boot: vendor_boot.img for newer devices (Android 11+ with GKI)
+#    - dtbo: dtbo.img for devices requiring device tree blob overlay
+#    - zip: Creates a flashable zip package (rooted devices)
+#    - all: Attempts to build and collect all available outputs
+#
+# 2. TWRP Build:
+#    - Uses minimal-manifest-twrp for AOSP-based builds
+#    - Branch 12.1 is for Android 12.1 devices
+#    - Branch 14.1 uses LineageOS sources for older devices
+#
+# 3. OFRP Build:
+#    - Uses OrangeFox sync repository from GitLab
+#    - Branch 12.1 (fox_12.1) is the current stable version
+#    - Requires device tree with OrangeFox-specific variables
+#
+# 4. PBRP Build:
+#    - Uses PitchBlack Recovery manifest
+#    - Branch android-12.1 is the current stable version
+#    - Requires device tree with PBRP-specific configurations
+#
+# 5. Device Tree Requirements:
+#    - Must have proper Android.mk/Android.bp
+#    - Must define device-specific variables
+#    - dependencies.json can specify additional repositories
+#
+# 6. Choosing the Right Output Type:
+#    - Most devices: recovery.img
+#    - A/B devices (no dedicated recovery): boot.img
+#    - Modern devices (Android 11+): may need vendor_boot.img
+#    - Check your device's partition layout to determine correct type
+#
+# 7. For issues and support:
+#    - TWRP: https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp
+#    - OFRP: https://wiki.orangefox.tech/
+#    - PBRP: https://github.com/PitchBlackRecoveryProject/manifest_pb
+#
+# =============================================================================
