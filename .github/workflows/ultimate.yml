@@ -127,6 +127,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Initialize Environment
+        shell: bash
         run: |
           echo "============================================================"
           echo "Setting up build environment..."
@@ -172,6 +173,7 @@ jobs:
           echo "============================================================"
 
       - name: Install Build Dependencies
+        shell: bash
         run: |
           echo "Installing required packages..."
           export DEBIAN_FRONTEND=noninteractive
@@ -201,6 +203,7 @@ jobs:
       # =========================================================================
       - name: Set Manifest Variables
         id: set_vars
+        shell: bash
         run: |
           RECOVERY_TYPE="${{ env.RECOVERY_TYPE }}"
           MANIFEST_BRANCH="${{ env.MANIFEST_BRANCH }}"
@@ -313,6 +316,7 @@ jobs:
       # Step 3: Sync Source Code
       # =========================================================================
       - name: Sync Recovery Source
+        shell: bash
         run: |
           echo "============================================================"
           echo "Syncing ${{ env.RECOVERY_TYPE }} source code..."
@@ -365,6 +369,7 @@ jobs:
       # Step 4: Clone Device Tree
       # =========================================================================
       - name: Clone Device Tree
+        shell: bash
         run: |
           echo "============================================================"
           echo "Cloning device tree..."
@@ -424,6 +429,7 @@ jobs:
       # =========================================================================
       - name: Build Recovery
         id: build
+        shell: bash
         run: |
           echo "============================================================"
           echo "Building ${{ env.RECOVERY_TYPE }} for ${{ env.DEVICE_NAME }}"
@@ -441,7 +447,7 @@ jobs:
           echo "Setting up build environment..."
 
           if [ -f "build/envsetup.sh" ]; then
-            source build/envsetup.sh
+            . build/envsetup.sh
           else
             echo "ERROR: build/envsetup.sh not found!"
             exit 1
@@ -541,6 +547,7 @@ jobs:
       - name: Prepare Artifacts
         id: artifacts
         if: success() || steps.build.outputs.BUILD_STATUS == 'partial'
+        shell: bash
         run: |
           echo "============================================================"
           echo "Preparing build artifacts..."
@@ -775,6 +782,7 @@ jobs:
       # =========================================================================
       - name: Build Summary
         if: always()
+        shell: bash
         run: |
           echo "============================================================"
           echo "Build Summary"
@@ -817,6 +825,7 @@ jobs:
       # =========================================================================
       - name: Cleanup Workspace
         if: always()
+        shell: bash
         run: |
           echo "Cleaning up workspace..."
           cd "${{ env.WORKSPACE }}"
